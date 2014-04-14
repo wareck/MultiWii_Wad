@@ -37,9 +37,12 @@
 #define MSP_WP                   118   //out message         get a WP, WP# is in the payload, returns (WP#, lat, lon, alt, flags) WP#0-home, WP#16-poshold
 #define MSP_BOXIDS               119   //out message         get the permanent IDs associated to BOXes
 #define MSP_SERVO_CONF           120   //out message         Servo settings
+#define MSP_NAV_STATUS			 121   //out message	     Returns navigation status
+#define MSP_NAV_CONFIG			 122   //out message		 Returns navigation parameters
+#define MSP_PCF8591              123   //out message         ADC values
 
 #define MSP_SET_RAW_RC           200   //in message          8 rc chan
-#define MSP_SET_RAW_GPS          201   //in message          fix, numsat, lat, lon, alt, speed
+#define MSP_SET_RAW_GPS          201   //in message          fix, numsat, lat, lon, alt, speed    //depreciated 
 #define MSP_SET_PID              202   //in message          P I D coeff (9 are used currently)
 #define MSP_SET_BOX              203   //in message          BOX setup (number is dependant of your setup)
 #define MSP_SET_RC_TUNING        204   //in message          rc rate, rc expo, rollpitch rate, yaw rate, dyn throttle PID
@@ -52,6 +55,8 @@
 #define MSP_SET_HEAD             211   //in message          define a new heading hold direction
 #define MSP_SET_SERVO_CONF       212   //in message          Servo settings
 #define MSP_SET_MOTOR            214   //in message          PropBalance function
+
+#define MSP_SET_NAV_CONFIG       215   //in message			 Sets nav config parameters - write to the eeprom  
 
 #define MSP_BIND                 240   //in message          no param
 
@@ -173,16 +178,12 @@ void serialCom() {
         #define GPS_COND  && (GPS_SERIAL != CURRENTPORT)
       #endif      
     #endif
-    #define SPEK_COND
-    #if defined(SPEKTRUM) && (UART_NUMBER > 1)
-      #define SPEK_COND && (SPEK_SERIAL_PORT != CURRENTPORT)
-    #endif
-    #define SBUS_COND
-    #if defined(SBUS) && (UART_NUMBER > 1)
-      #define SBUS_COND && (SBUS_SERIAL_PORT != CURRENTPORT)
+    #define RX_COND
+#if (defined(SPEKTRUM)|| defined(SBUS)) && (UART_NUMBER >1)
+      #define RX_COND && (RX_SERIAL_PORT != CURRENTPORT)
     #endif
     uint8_t cc = SerialAvailable(CURRENTPORT);
-    while (cc-- GPS_COND SPEK_COND SBUS_COND) {
+    while (cc-- GPS_COND RX_COND) {
       uint8_t bytesTXBuff = SerialUsedTXBuff(CURRENTPORT); // indicates the number of occupied bytes in TX buffer
       if (bytesTXBuff > TX_BUFFER_SIZE - 50 ) return; // ensure there is enough free TX buffer to go further (50 bytes margin)
       c = SerialRead(CURRENTPORT);
@@ -247,18 +248,6 @@ void evaluateCommand() {
      s_struct_w((uint8_t*)&rcSerial,16);
      rcSerialCount = 50; // 1s transition 
      break;
-   #if GPS
-   case MSP_SET_RAW_GPS:
-     f.GPS_FIX = read8();
-     GPS_numSat = read8();
-     GPS_coord[LAT] = read32();
-     GPS_coord[LON] = read32();
-     GPS_altitude = read16();
-     GPS_speed = read16();
-     GPS_update |= 2;              // New data signalisation to GPS functions
-     headSerialReply(0);
-     break;
-   #endif
    case MSP_SET_PID:
      s_struct_w((uint8_t*)&conf.pid[0].P8,3*PIDITEMS);
      break;
@@ -359,7 +348,7 @@ void evaluateCommand() {
      id.v     = VERSION;
      id.t     = MULTITYPE;
      id.msp_v = MSP_VERSION;
-     id.cap   = capability|DYNBAL<<2|FLAP<<3;
+     id.cap   = capability|DYNBAL<<2|FLAP<<3|NAVCAP<<4|((uint32_t)NAVI_VERSION<<28);			//Navi version is stored in the upper four bits; 
      s_struct((uint8_t*)&id,7);
      break;
    case MSP_STATUS:
@@ -392,8 +381,18 @@ void evaluateCommand() {
        if(rcOptions[BOXCAMTRIG]) tmp |= 1<<BOXCAMTRIG;
      #endif
      #if GPS
-       if(f.GPS_HOME_MODE) tmp |= 1<<BOXGPSHOME; 
-       if(f.GPS_HOLD_MODE) tmp |= 1<<BOXGPSHOLD;
+	   switch (f.GPS_mode) {
+		   case GPS_MODE_HOLD: 
+			    tmp |= 1<<BOXGPSHOLD;
+				break;
+		   case GPS_MODE_RTH:
+			   tmp |= 1<<BOXGPSHOME;
+			   break;
+		   case GPS_MODE_NAV:
+			   tmp |= 1<<BOXGPSNAV;
+			   break;
+		   }
+
      #endif
      #if defined(FIXEDWING) || defined(HELICOPTER)
        if(f.PASSTHRU_MODE) tmp |= 1<<BOXPASSTHRU;
@@ -437,6 +436,13 @@ void evaluateCommand() {
    case MSP_SERVO_CONF:
      s_struct((uint8_t*)&conf.servoConf[0].min,56); // struct servo_conf_ is 7 bytes length: min:2 / max:2 / middle:2 / rate:1    ----     8 servo =>  8x7 = 56
      break;
+
+   #ifdef PCF8591 
+   case MSP_PCF8591:
+	s_struct((uint8_t*)&pcf8591, 4);
+    break;
+   #endif 
+
    case MSP_SET_SERVO_CONF:
      s_struct_w((uint8_t*)&conf.servoConf[0].min,56);
      break;
@@ -497,57 +503,147 @@ void evaluateCommand() {
    case MSP_MOTOR_PINS:
      s_struct((uint8_t*)&PWM_PIN,8);
      break;
-   #if defined(USE_MSP_WP)    
+
+#if defined(USE_MSP_WP)    
+
+   case MSP_SET_NAV_CONFIG:
+	   s_struct_w((uint8_t*)&GPS_conf,sizeof(GPS_conf));
+	   break;
+
+   case MSP_NAV_CONFIG:
+	   s_struct((uint8_t*)&GPS_conf,sizeof(GPS_conf));
+	   break;
+
+   case MSP_NAV_STATUS:
+	   {
+	   headSerialReply(7);
+	   serialize8(f.GPS_mode);
+	   serialize8(NAV_state);
+	   serialize8(mission_step.action);
+	   serialize8(mission_step.number);
+	   serialize8(NAV_error);
+	   serialize16( (int16_t)(target_bearing/100));
+	   //serialize16(magHold);
+	   }
+	   break;
+
    case MSP_WP:
      {
-       int32_t lat = 0,lon = 0;
-       uint8_t wp_no = read8();        //get the wp number  
-       headSerialReply(18);
-       if (wp_no == 0) {
-         lat = GPS_home[LAT];
-         lon = GPS_home[LON];
-       } else if (wp_no == 16) {
-         lat = GPS_hold[LAT];
-         lon = GPS_hold[LON];
-       }
-       serialize8(wp_no);
-       serialize32(lat);
-       serialize32(lon);
-       serialize32(AltHold);           //altitude (cm) will come here -- temporary implementation to test feature with apps
-       serialize16(0);                 //heading  will come here (deg)
-       serialize16(0);                 //time to stay (ms) will come here 
-       serialize8(0);                  //nav flag will come here
+	 uint8_t wp_no;
+	 uint8_t flag;
+	 bool    success;
+	 
+	   wp_no = read8();        //get the wp number  
+	   headSerialReply(21);
+	   if (wp_no == 0)					//Get HOME coordinates
+		   {
+		   serialize8(wp_no);
+		   serialize8(mission_step.action);
+		   serialize32(GPS_home[LAT]);
+		   serialize32(GPS_home[LON]);
+		   flag = MISSION_FLAG_HOME;
+		   }
+	   if (wp_no == 255)				//Get poshold coordinates
+		   {
+		   serialize8(wp_no);
+	   	   serialize8(mission_step.action);
+		   serialize32(GPS_hold[LAT]);
+		   serialize32(GPS_hold[LON]);
+		   flag = MISSION_FLAG_HOLD;
+		   }
+
+	    if ((wp_no>0) && (wp_no<255))
+		   {
+			if (NAV_state == NAV_STATE_NONE)
+				{
+				 success = recallWP(wp_no);
+				 serialize8(wp_no);
+   				 serialize8(mission_step.action);
+				 serialize32(mission_step.pos[LAT]);
+				 serialize32(mission_step.pos[LON]);
+				 if (success == true) flag = mission_step.flag;
+				 else flag = MISSION_FLAG_CRC_ERROR;	//CRC error
+				}
+			else 
+				{
+				 serialize8(wp_no);
+   				 serialize8(0);
+				 serialize32(GPS_home[LAT]);
+		         serialize32(GPS_home[LON]);
+				 flag = MISSION_FLAG_NAV_IN_PROG;
+				}
+		   }
+	   serialize32(mission_step.altitude);
+	   serialize16(mission_step.parameter1);
+	   serialize16(mission_step.parameter2);
+	   serialize16(mission_step.parameter3);
+	   serialize8(flag);
      }
      break;
+
    case MSP_SET_WP:
-     {
-       int32_t lat = 0,lon = 0,alt = 0;
-       uint8_t wp_no = read8();        //get the wp number
-       lat = read32();
-       lon = read32();
-       alt = read32();                 // to set altitude (cm)
-       read16();                       // future: to set heading (deg)
-       read16();                       // future: to set time to stay (ms)
-       read8();                        // future: to set nav flag
-       if (wp_no == 0) {
-         GPS_home[LAT] = lat;
-         GPS_home[LON] = lon;
-         f.GPS_HOME_MODE = 0;          // with this flag, GPS_set_next_wp will be called in the next loop -- OK with SERIAL GPS / OK with I2C GPS
-         f.GPS_FIX_HOME  = 1;
-         if (alt != 0) AltHold = alt;  // temporary implementation to test feature with apps
-       } else if (wp_no == 16) {       // OK with SERIAL GPS  --  NOK for I2C GPS / needs more code dev in order to inject GPS coord inside I2C GPS
-         GPS_hold[LAT] = lat;
-         GPS_hold[LON] = lon;
-         if (alt != 0) AltHold = alt;  // temporary implementation to test feature with apps
-         #if !defined(I2C_GPS)
-           nav_mode      = NAV_MODE_WP;
-           GPS_set_next_wp(&GPS_hold[LAT],&GPS_hold[LON]);
-         #endif
-       }
-     }
-     headSerialReply(0);
-     break;
-   #endif
+	   //TODO: add I2C_gps handling
+
+	   {
+	   uint8_t wp_no = read8();																   //Get the step number
+
+	   if (NAV_state == NAV_STATE_HOLD_INFINIT && wp_no == 255) {                              //Special case - during stable poshold we allow change the hold position
+		   mission_step.number = wp_no;
+		   mission_step.action = MISSION_HOLD_UNLIM; 
+		   uint8_t temp = read8();
+		   mission_step.pos[LAT] =  read32();
+		   mission_step.pos[LON] =  read32();
+		   mission_step.altitude =  read32();
+		   mission_step.parameter1 = read16();
+		   mission_step.parameter2 = read16();
+		   mission_step.parameter3 = read16();
+		   mission_step.flag     =  read8();
+		   if (mission_step.altitude != 0) set_new_altitude(mission_step.altitude);
+		   GPS_set_next_wp(&mission_step.pos[LAT], &mission_step.pos[LON], &GPS_coord[LAT], &GPS_coord[LON]);	
+		   if ((wp_distance/100) >= GPS_conf.safe_wp_distance) NAV_state = NAV_STATE_NONE;
+			  else NAV_state = NAV_STATE_WP_ENROUTE;			
+		   break;
+		   }
+
+
+	   if (NAV_state == NAV_STATE_NONE)		{									// The Nav state is not zero, so navigation is in progress, silently ignore SET_WP command)
+
+		   mission_step.number	   =    wp_no;
+		   mission_step.action     =  read8();
+		   mission_step.pos[LAT]   =  read32();
+		   mission_step.pos[LON]   =  read32();
+		   mission_step.altitude   =  read32();
+		   mission_step.parameter1 = read16();
+		   mission_step.parameter2 = read16();
+		   mission_step.parameter3 = read16();
+		   mission_step.flag       =  read8();
+
+//It's not sure, that we want to do poshold change via mission planner so perhaps the next if is deletable
+/*
+		   if (mission_step.number == 255)											//Set up new hold position via mission planner, It must set the action to MISSION_HOLD_INFINIT 
+			   {
+			   if (mission_step.altitude !=0) set_new_altitude(mission_step.altitude);							//Set the altitude
+		       GPS_set_next_wp(&mission_step.pos[LAT], &mission_step.pos[LON], &GPS_coord[LAT], &GPS_coord[LON]);	
+			   NAV_state = NAV_STATE_WP_ENROUTE;									//Go to that position, then it will switch to poshold unlimited when reached
+			   }
+*/
+		   if (mission_step.number == 0)											//Set new Home position
+			   {
+			   GPS_home[LAT] = mission_step.pos[LAT];
+			   GPS_home[LON] = mission_step.pos[LON];
+			   }
+
+		   if (mission_step.number >0 && mission_step.number<255)			//Not home and not poshold, we are free to store it in the eprom
+			   if (mission_step.number <= getMaxWPNumber())				    // Do not thrash the EEPROM with invalid wp number
+				   storeWP();
+
+		   headSerialReply(0);
+		   } 
+	   }
+	   break;
+
+#endif
+
    case MSP_RESET_CONF:
      if(!f.ARMED) LoadDefaults();
      headSerialReply(0);
@@ -651,6 +747,13 @@ void evaluateOtherData(uint8_t sr) {
     }
   #endif // SUPPRESS_OTHER_SERIAL_COMMANDS
 }
+
+void SerialWrite16(uint8_t port, int16_t val)
+{
+  CURRENTPORT=port;
+  serialize16(val);UartSendData(port);
+}
+
 
 #ifdef DEBUGMSG
 void debugmsg_append_str(const char *str) {

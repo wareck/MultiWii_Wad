@@ -80,18 +80,30 @@ void alarmHandler(void){
   #endif
   
   #if GPS
-    if ((f.GPS_HOME_MODE || f.GPS_HOLD_MODE) && !f.GPS_FIX) alarmArray[2] = 2;
+    if ((f.GPS_mode != GPS_MODE_NONE) && !f.GPS_FIX) alarmArray[2] = 2;
     else if (!f.GPS_FIX)alarmArray[2] = 1;
     else alarmArray[2] = 0;
   #endif
   
-  #if defined(VOLUME_FLIGHT)||defined(VOLUME_S1)||defined(VOLUME_S2)||defined(VOLUME_S3)
-    if(f.VOLUME_MODE==1 && alarmArray[1] == 0)
-      alarmArray[1] = 1;
-    else if(f.VOLUME_MODE==0 && alarmArray[1] == 1)
-      alarmArray[1] = 0;
-  #endif
-  
+#if (defined (LOG_PERMANENT_SD_ONLY))|(defined (LOG_GPS_POSITION)) && !(defined(MWI_SDCARD))
+#error "if you had enabled options in SDCARD support you must enable #define MWI_SDCARD, please verify your config.h"
+#endif
+#if (defined (MWI_SDCARD))&& !(defined(LOG_PERMANENT))
+#error "if you wants to use SDCARD support, you must enable #define LOG_PERMANENT, please verify your config.h"
+#endif
+
+#if defined(VOLUME_FLIGHT)||defined(VOLUME_S1)||defined(VOLUME_S2)||defined(VOLUME_S3)
+#if !defined(BUZZER)
+#error "If you want to use VOLUME_FLIGHT you must use a buzzer...Please check your config.h"
+#error "Si vous utilisez l'option VOLUME_FLIGHT vous devez activer un buzzer...Merci de verifier config.h'"
+#endif
+
+	if (f.VOLUME_MODE == 1 && alarmArray[1] == 0)
+		alarmArray[1] = 1;
+	else if (f.VOLUME_MODE == 0 && alarmArray[1] == 1)
+		alarmArray[1] = 0;
+#endif
+
   #if defined(BUZZER)
     if ( rcOptions[BOXBEEPERON] )alarmArray[3] = 1;
     else alarmArray[3] = 0;
@@ -158,7 +170,7 @@ void alarmPatternComposer(){
       resource = 3; 
       #if GPS
         if (alarmArray[2]==1) patternDecode(resource,100,100,100,100,100);                      // blue fast blink -->no gps fix
-        else if (f.GPS_HOME_MODE || f.GPS_HOLD_MODE) patternDecode(resource,100,100,100,100,1000); //blue slow blink --> gps active
+		else if (f.GPS_mode != GPS_MODE_NONE) patternDecode(resource,100,100,100,100,1000); //blue slow blink --> gps active
         else setTiming(resource,100,1000);                                                        //blue short blink -->gps fix ok
       #else
         turnOff(resource);
@@ -410,10 +422,10 @@ void blinkLED(uint8_t num, uint8_t ontime,uint8_t repeat) {
       if(!(f.ANGLE_MODE||f.HORIZON_MODE)){ //ACRO
         b[0]= 'x';
       }
-      else if(f.GPS_HOME_MODE){ //RTH
+	  else if(f.GPS_mode == GPS_MODE_RTH){ //RTH
         b[0]= 'w';
       }   
-      else if(f.GPS_HOLD_MODE){//Position Hold
+	  else if(f.GPS_mode == GPS_MODE_HOLD){//Position Hold
         b[0]= 'v';
       } 
       else if(f.HORIZON_MODE){ //HORIZON mode
@@ -696,12 +708,16 @@ void vario_output(uint16_t d, uint8_t up) {
     uint8_t d1 = d/2;
   #endif
   if (d1<1) d1 = 1;
+  #if defined (LCD_CONF) || defined(LCD_TELEMETRY) || defined(HAS_LCD)
   for (uint8_t i=0; i<d1; i++) LCDprint(s1);
+  #endif
   #ifndef VARIOMETER_SINGLE_TONE
     uint8_t s2 = (up ? 0x07 : 0x05);
     uint8_t d2 = d-d1;
     if (d2<1) d2 = 1;
+#if defined (LCD_CONF) || defined(LCD_TELEMETRY) || defined(HAS_LCD)
     for (uint8_t i=0; i<d2; i++) LCDprint(s2);
+#endif
   #endif
 }
 

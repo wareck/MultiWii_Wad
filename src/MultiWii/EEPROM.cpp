@@ -58,6 +58,7 @@ bool readEEPROM() {
   #endif
   #if GPS
     GPS_set_pids();    // at this time we don't have info about GPS init done
+	recallGPSconf();   // Load gps parameters
   #endif
   #if defined(ARMEDTIMEWARNING)
     ArmedTimeWarningMicroSeconds = (conf.armedtimewarning *1000000);
@@ -83,6 +84,12 @@ void writeParams(uint8_t b) {
   #endif
   conf.checksum = calculate_sum((uint8_t*)&conf, sizeof(conf));
   eeprom_write_block((const void*)&conf, (void*)(global_conf.currentSet * sizeof(conf) + sizeof(global_conf)), sizeof(conf));
+
+#if GPS
+  writeGPSconf();		//Write GPS parameters
+  recallGPSconf();		//Read it to ensure correct eeprom content
+#endif
+
   readEEPROM();
   if (b == 1) blinkLED(15,20,1);
   #if defined(BUZZER)
@@ -129,7 +136,13 @@ void update_constants() {
   #if defined(MY_PRIVATE_DEFAULTS)
     #include MY_PRIVATE_DEFAULTS
   #endif
-  writeParams(0); // this will also (p)reset checkNewConf with the current version number again.
+
+#if GPS
+  loadGPSdefaults();
+#endif
+
+	writeParams(0); // this will also (p)reset checkNewConf with the current version number again.
+
 }
 
 void LoadDefaults() {
@@ -196,7 +209,8 @@ void LoadDefaults() {
   update_constants(); // this will also write to eeprom
 }
 
-#ifdef LOG_PERMANENT
+#ifdef LOG_PERMANENT 
+#ifndef LOG_PERMANENT_SD_ONLY
 void readPLog(void) {
   eeprom_read_block((void*)&plog, (void*)(E2END - 4 - sizeof(plog)), sizeof(plog));
   if(calculate_sum((uint8_t*)&plog, sizeof(plog)) != plog.checksum) {
@@ -216,31 +230,97 @@ void writePLog(void) {
   eeprom_write_block((const void*)&plog, (void*)(E2END - 4 - sizeof(plog)), sizeof(plog));
 }
 #endif
+#endif
 
-#if defined(GPS_NAV)
-//Stores the WP data in the wp struct in the EEPROM
-void storeWP() {
+#if GPS
+
+//Define variables for calculations of EEPROM positions
 #ifdef MULTIPLE_CONFIGURATION_PROFILES
     #define PROFILES 3
 #else
     #define PROFILES 1
 #endif
+#ifdef LOG_PERMANENT
+    #define PLOG_SIZE sizeof(plog)
+#else 
+    #define PLOG_SIZE 0
+#endif
+
+//Store gps_config
+
+void writeGPSconf(void) {
+	GPS_conf.checksum = calculate_sum((uint8_t*)&GPS_conf, sizeof(GPS_conf));
+	eeprom_write_block( (void*)&GPS_conf, (void*) (PROFILES * sizeof(conf) + sizeof(global_conf)), sizeof(GPS_conf) );
+	}    
+
+//Recall gps_configuration
+bool recallGPSconf(void) {
+	eeprom_read_block((void*)&GPS_conf, (void*)(PROFILES * sizeof(conf) + sizeof(global_conf)), sizeof(GPS_conf));
+	if(calculate_sum((uint8_t*)&GPS_conf, sizeof(GPS_conf)) != GPS_conf.checksum)
+		{
+		loadGPSdefaults();
+		return false;
+		}
+
+	return true;
+	}
+
+//Load gps_config_defaults and writes back to EEPROM just to make it sure
+void loadGPSdefaults(void) {
+	//zero out the conf struct
+	uint8_t *ptr = (uint8_t *) &GPS_conf;
+	for (int i=0;i<sizeof(GPS_conf);i++) *ptr++ = 0;
+
+#if defined(GPS_FILTERING)
+	GPS_conf.filtering = 1;
+#endif
+#if defined (GPS_LEAD_FILTER)
+	GPS_conf.lead_filter = 1;
+#endif
+#if defined (DONT_RESET_HOME_AT_ARM)
+	GPS_conf.dont_reset_home_at_arm = 1;
+#endif
+
+	GPS_conf.nav_controls_heading = NAV_CONTROLS_HEADING;
+	GPS_conf.nav_tail_first       = NAV_TAIL_FIRST;
+	GPS_conf.nav_rth_takeoff_heading = NAV_SET_TAKEOFF_HEADING;
+	GPS_conf.slow_nav                = NAV_SLOW_NAV;
+	GPS_conf.wait_for_rth_alt        = WAIT_FOR_RTH_ALT;
+
+	GPS_conf.ignore_throttle         = IGNORE_THROTTLE;
+	GPS_conf.takeover_baro           = NAV_TAKEOVER_BARO;
+
+
+	GPS_conf.wp_radius               = GPS_WP_RADIUS;
+	GPS_conf.safe_wp_distance        = SAFE_WP_DISTANCE;
+	GPS_conf.nav_max_altitude        = MAX_NAV_ALTITUDE;
+	GPS_conf.nav_speed_max           = NAV_SPEED_MAX;
+	GPS_conf.nav_speed_min           = NAV_SPEED_MIN;
+	GPS_conf.crosstrack_gain         = CROSSTRACK_GAIN * 100;
+	GPS_conf.nav_bank_max            = NAV_BANK_MAX;
+	GPS_conf.rth_altitude            = RTH_ALTITUDE;
+	GPS_conf.fence                   = FENCE_DISTANCE;
+	GPS_conf.land_speed              = LAND_SPEED;
+	GPS_conf.max_wp_number           = getMaxWPNumber();
+	writeGPSconf();
+
+}
+
+
+//Stores the WP data in the wp struct in the EEPROM
+void storeWP() {
+
 	if (mission_step.number >254) return;
 	mission_step.checksum = calculate_sum((uint8_t*)&mission_step, sizeof(mission_step));
-	eeprom_write_block((void*)&mission_step, (void*)(PROFILES * sizeof(conf) + sizeof(global_conf)+(sizeof(mission_step)*mission_step.number)),sizeof(mission_step));
+	eeprom_write_block((void*)&mission_step, (void*)(PROFILES * sizeof(conf) + sizeof(global_conf) + sizeof(GPS_conf) +(sizeof(mission_step)*mission_step.number)),sizeof(mission_step));
 }
 
 // Read the given number of WP from the eeprom, supposedly we can use this during flight.
 // Returns true when reading is successfull and returns false if there were some error (for example checksum)
 bool recallWP(uint8_t wp_number) {
-#ifdef MULTIPLE_CONFIGURATION_PROFILES
-    #define PROFILES 3
-#else
-    #define PROFILES 1
-#endif
 	if (wp_number > 254) return false;
 
-	eeprom_read_block((void*)&mission_step, (void*)(PROFILES * sizeof(conf) + sizeof(global_conf)+(sizeof(mission_step)*wp_number)), sizeof(mission_step));
+	eeprom_read_block((void*)&mission_step, (void*)(PROFILES * sizeof(conf) + sizeof(global_conf)+sizeof(GPS_conf)+(sizeof(mission_step)*wp_number)), sizeof(mission_step));
 	if(calculate_sum((uint8_t*)&mission_step, sizeof(mission_step)) != mission_step.checksum) return false;
 
 	return true;
@@ -248,22 +328,153 @@ bool recallWP(uint8_t wp_number) {
 
 // Returns the maximum WP number that can be stored in the EEPROM, calculated from conf and plog sizes, and the eeprom size
 uint8_t getMaxWPNumber() {
-#ifdef LOG_PERMANENT
-    #define PLOG_SIZE sizeof(plog)
-#else 
-    #define PLOG_SIZE 0
-#endif
-#ifdef MULTIPLE_CONFIGURATION_PROFILES
-    #define PROFILES 3
-#else
-	#define PROFILES 1
-#endif
 
-	uint16_t first_avail = PROFILES*sizeof(conf) + sizeof(global_conf)+ 1; //Add one byte for addtnl separation
+	uint16_t first_avail = PROFILES*sizeof(conf) + sizeof(global_conf)+sizeof(GPS_conf)+ 1; //Add one byte for addtnl separation
 	uint16_t last_avail  = E2END - PLOG_SIZE - 4;										  //keep the last 4 bytes intakt
 	uint16_t wp_num = (last_avail-first_avail)/sizeof(mission_step);
 	if (wp_num>254) wp_num = 254;
 	return wp_num;
 }
+#endif
+
+
+#ifdef MWI_SDCARD
+#include <SdFat.h>
+#include <SdFatUtil.h>
+
+
+#define PERMANENT_LOG_FILENAME "PERM.TXT"
+#define GPS_LOG_FILENAME "GPS_DATA.RAW"
+
+SdFat sd;
+ofstream gps_data;	// Log file for GPS raw data
+ofstream permanent; // Log file for permanent logging
+SdFile mission_file; // comma separated file for missions ( lat/lon/alt/heading )
+
+uint8_t sdFlags = 0;
+#define MFO_FLAG_ON 0x01			
+#define MFO_FLAG_OFF 0xFE
+
+/* Init SD card : assign OUTPUT mode to CSPIN and start SPI mode */
+void init_SD(){
+#if defined DROTEK_DROFLY_V3_GPS||defined DROTEK_DROFLY_V3
+	DDRH |= (1 << 2);
+#else
+	pinMode(CSPIN, OUTPUT); 	// Put CSPIN to OUTPUT for SD library
+#endif
+	if (!sd.begin(CSPIN, SPI_FULL_SPEED)) {
+		f.SDCARD = 0;      	// If init fails, tell the code not to try to write on it
+	}
+	else {
+		f.SDCARD = 1;
+	}
+}
+
+
+void writeGPSLog(int32_t latitude, int32_t longitude, int32_t altitude) {
+	if (f.SDCARD == 0) return;
+	gps_data.open(GPS_LOG_FILENAME, O_WRITE | O_CREAT | O_APPEND);
+	char lat_c[11];
+	char lon_c[11];
+	char alt_c[11];
+
+	snprintf(lat_c, 11, "%ld", latitude);
+	snprintf(lon_c, 11, "%ld", longitude);
+	snprintf(alt_c, 11, "%ld", altitude);
+
+	gps_data << lat_c << ',' << lon_c << ',' << alt_c << endl;
+	gps_data.flush();
+	gps_data.close();
+
+}
+
+void writePLogToSD() {
+	if (f.SDCARD == 0) return;
+	char buf[12];
+	plog.checksum = calculate_sum((uint8_t*)&plog, sizeof(plog));
+	permanent.open(PERMANENT_LOG_FILENAME, O_WRITE | O_CREAT | O_TRUNC);
+
+	permanent << "arm=" << plog.arm << endl;
+	permanent << "disarm=" << plog.disarm << endl;
+	permanent << "start=" << plog.start << endl;
+	permanent << "armed_time=" << plog.armed_time << endl;
+	snprintf(buf, 11, "%lu", plog.lifetime);
+	permanent << "lifetime=" << buf << endl;
+	permanent << "failsafe=" << plog.failsafe << endl;
+	permanent << "i2c=" << plog.i2c << endl;
+	memset(buf, '\0', 12);
+	snprintf(buf, 5, "%hhu", plog.running);
+	permanent << "running=" << buf << endl;
+	memset(buf, '\0', 12);
+	snprintf(buf, 5, "%hhu", plog.checksum);
+	permanent << "checksum=" << buf << endl;
+
+	permanent.flush();
+	permanent.close();
+
+}
+
+void fillPlogStruct(char* key, char* value) {
+	if (strcmp(key, "arm") == 0)			sscanf(value, "%u", &plog.arm);
+	if (strcmp(key, "disarm") == 0)		sscanf(value, "%u", &plog.disarm);
+	if (strcmp(key, "start") == 0)		sscanf(value, "%u", &plog.start);
+	if (strcmp(key, "armed_time") == 0)	sscanf(value, "%lu", &plog.armed_time);
+	if (strcmp(key, "lifetime") == 0)	sscanf(value, "%lu", &plog.lifetime);
+	if (strcmp(key, "failsafe") == 0)	sscanf(value, "%u", &plog.failsafe);
+	if (strcmp(key, "i2c") == 0)			sscanf(value, "%u", &plog.i2c);
+	if (strcmp(key, "running") == 0)		sscanf(value, "%hhu", &plog.running);
+	if (strcmp(key, "checksum") == 0)	sscanf(value, "%hhu", &plog.checksum);
+}
+
+void readPLogFromSD() {
+	if (f.SDCARD == 0) return;
+	char key[12];
+	char value[32];
+	char* tabPtr = key;
+	int c;
+	uint8_t i = 0;
+
+	ifstream file("perm.txt");
+
+	while ((c = file.get()) >= 0) {
+		switch ((char)c) {
+		case ' ':
+			break;
+		case '=':
+			*tabPtr = '\0';
+			tabPtr = value;
+			break;
+		case '\n':
+			*tabPtr = '\0';
+			tabPtr = key;
+			i = 0;
+			fillPlogStruct(key, value);
+			memset(key, '\0', sizeof(key));
+			memset(value, '\0', sizeof(value));
+			break;
+		default:
+			i++;
+			if (i <= 12) {
+				*tabPtr = (char)c;
+				tabPtr++;
+			}
+			break;
+		}
+	}
+
+	if (calculate_sum((uint8_t*)&plog, sizeof(plog)) != plog.checksum) {
+#if defined(BUZZER) 
+		alarmArray[7] = 3;
+		blinkLED(9, 100, 3);
+#endif
+		// force load defaults
+		plog.arm = plog.disarm = plog.start = plog.failsafe = plog.i2c = 11;
+		plog.running = 1;
+		plog.lifetime = plog.armed_time = 3;
+		writePLogToSD();
+	}
+}
+
+
 
 #endif

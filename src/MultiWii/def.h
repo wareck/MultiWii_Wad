@@ -302,7 +302,7 @@
     #define STABLEPIN_OFF              ;
   #endif 
   #define PPM_PIN_INTERRUPT          attachInterrupt(0, rxInt, RISING); //PIN 0
-  #define SPEK_SERIAL_PORT           0
+  #define RX_SERIAL_PORT             0
   //RX PIN assignment inside the port //for PORTD
   #define THROTTLEPIN                2
   #define ROLLPIN                    4
@@ -429,8 +429,8 @@
   #define STABLEPIN_ON               ;
   #define STABLEPIN_OFF              ;
   #define PPM_PIN_INTERRUPT          DDRE &= ~(1 << 6);PORTE |= (1 << 6); EICRB |= (1 << ISC61)|(1 << ISC60); EIMSK |= (1 << INT6);
-  #if !defined(SPEK_SERIAL_PORT)
-    #define SPEK_SERIAL_PORT         1
+  #if !defined(RX_SERIAL_PORT)
+    #define RX_SERIAL_PORT         1
   #endif
   #define USB_CDC_TX                 3
   #define USB_CDC_RX                 2
@@ -569,8 +569,8 @@
   #else
     #define PPM_PIN_INTERRUPT        attachInterrupt(4, rxInt, RISING);  //PIN 19, also used for Spektrum satellite option
   #endif
-  #if !defined(SPEK_SERIAL_PORT)
-    #define SPEK_SERIAL_PORT         1
+  #if !defined(RX_SERIAL_PORT)
+    #define RX_SERIAL_PORT         1
   #endif
   //RX PIN assignment inside the port //for PORTK
   #define THROTTLEPIN                0  //PIN 62 =  PIN A8
@@ -629,7 +629,7 @@
   #define LEDPIN_OFF                 PORTD &= ~(1<<4);  
   #define LEDPIN_ON                  PORTD |= (1<<4);     
   #define SPEK_BAUD_SET              UCSR0A  = (1<<U2X0); UBRR0H = ((F_CPU  / 4 / 115200 -1) / 2) >> 8; UBRR0L = ((F_CPU  / 4 / 115200 -1) / 2);
-  #define SPEK_SERIAL_PORT           0
+  #define RX_SERIAL_PORT           0
 
   /* Unavailable pins on MONGOOSE1_0 */
   #define BUZZERPIN_PINMODE          ; // D8
@@ -1159,6 +1159,63 @@
   #undef INTERNAL_I2C_PULLUPS
 #endif
 
+#if defined(DROTEK_DROFLY_V2)
+#if defined PILOTLAMP
+#define BUZZERPIN_PINMODE          pinMode (11, OUTPUT);
+#define    PL_PIN_ON    PORTB |= 1<<5;
+#define    PL_PIN_OFF   PORTB &= ~(1<<5);
+#else
+#define BUZZERPIN_PINMODE          pinMode (11, OUTPUT);
+#define BUZZERPIN_ON               PORTB |= 1<<5;
+#define BUZZERPIN_OFF              PORTB &= ~(1<<5);
+#endif 
+#define MPU6050
+#define HMC5883
+#define MS561101BA
+#define ACC_ORIENTATION(X, Y, Z)  {imu.accADC[ROLL]  =  Y; imu.accADC[PITCH]  = -X; imu.accADC[YAW]  = Z;}
+#define GYRO_ORIENTATION(X, Y, Z) {imu.gyroADC[ROLL] =  X; imu.gyroADC[PITCH] = Y; imu.gyroADC[YAW] = -Z;}
+#define MAG_ORIENTATION(X, Y, Z)  {imu.magADC[ROLL]  =  -Y; imu.magADC[PITCH]  = X; imu.magADC[YAW]  = -Z;}
+#define MPU6050_ADDRESS 0X69
+#define MPU6050_I2C_AUX_MASTER // MAG connected to the AUX I2C bus of MPU6050
+#undef INTERNAL_I2C_PULLUPS
+
+#endif
+
+#if defined(DROTEK_DROFLY_V3)||defined (DROTEK_DROFLY_V3_GPS) 
+#define MPU6050
+#define MS561101BA
+#define ACC_ORIENTATION(X, Y, Z)  {imu.accADC[ROLL]  =  Y; imu.accADC[PITCH]  = -X; imu.accADC[YAW]  = Z;}
+#define GYRO_ORIENTATION(X, Y, Z) {imu.gyroADC[ROLL] =  X; imu.gyroADC[PITCH] = Y; imu.gyroADC[YAW] = -Z;}
+#if defined (DROTEK_DROFLY_V3_GPS) 
+#define HMC5883
+#define MAG_ORIENTATION(X, Y, Z)  {imu.magADC[ROLL]  =  -Y; imu.magADC[PITCH]  = -X; imu.magADC[YAW]  = Z;}
+#endif
+#define MPU6050_ADDRESS 0X69
+#undef INTERNAL_I2C_PULLUPS
+#define LEDPIN_PINMODE             pinMode (13, OUTPUT);pinMode (30, OUTPUT);
+#define LEDPIN_TOGGLE              PINB  |= (1<<7); PINC  |= (1<<7);
+#define LEDPIN_ON                  PORTB |= (1<<7); PORTC |= (1<<7);
+#define LEDPIN_OFF                 PORTB &= ~(1<<7);PORTC &= ~(1<<7);
+#define STABLEPIN_PINMODE          pinMode (30, OUTPUT);
+#define STABLEPIN_ON               PORTC |= 1<<7;
+#define STABLEPIN_OFF              PORTC &= ~(1<<7);
+#define BUZZERPIN_PINMODE          pinMode (11, OUTPUT);
+#if defined MWI_SDCARD
+#define DDR_XCK2    DDRH 
+#define PORT_XCK2   PORTH  
+#define XCK2        PH2   
+#define CSPIN XCK2
+#endif
+#if defined PILOTLAMP
+#define    PL_PIN_ON    PORTB |= 1<<5;
+#define    PL_PIN_OFF   PORTB &= ~(1<<5);
+#else
+#define BUZZERPIN_ON               PORTB |= 1<<5;
+#define BUZZERPIN_OFF              PORTB &= ~(1<<5);
+#endif 
+#endif
+
+
 #if defined(FLYDUINO_MPU)
   #define MPU6050
   #define ACC_ORIENTATION(X, Y, Z) {imu.accADC[ROLL] = X; imu.accADC[PITCH] = Y; imu.accADC[YAW] = Z;}
@@ -1395,13 +1452,14 @@
   #undef INTERNAL_I2C_PULLUPS
   #define MINTHROTTLE 1050
   #define MAXTHROTTLE 2000
-  #define EXT_MOTOR_RANGE
+  #define EXT_MOTOR_32KHZ
   #define VBAT
   #define VBATSCALE       54
   #define VBATLEVEL_WARN1 10
   #define VBATLEVEL_WARN2 10
   #define VBATLEVEL_CRIT  10
   #define NO_VBAT         10
+  #define MOTOR_STOP
 #endif
 
 #if defined(MEGAWAP_V2_STD) 
@@ -1437,21 +1495,29 @@
 #endif
 
 #if defined(RCNet_FC) 
-  #define MPU6050 
-  #define MS561101BA 
-  #define ACC_ORIENTATION(X, Y, Z)  {imu.accADC[ROLL]  = -X; imu.accADC[PITCH]  = -Y; imu.accADC[YAW]  =  Z;}
-  #define GYRO_ORIENTATION(X, Y, Z) {imu.gyroADC[ROLL] =  Y; imu.gyroADC[PITCH] = -X; imu.gyroADC[YAW] = -Z;}
-  #undef INTERNAL_I2C_PULLUPS 
-  //servo pins on RCNet FC board are at pins 38,39,40
-  #define SERVO_1_PINMODE            pinMode(40,OUTPUT);        // TILT_PITCH
-  #define SERVO_1_PIN_HIGH           PORTL |= 1<<5;
-  #define SERVO_1_PIN_LOW            PORTL &= ~(1<<5);
-  #define SERVO_2_PINMODE            pinMode(39,OUTPUT);        // TILT_ROLL 
-  #define SERVO_2_PIN_HIGH           PORTL |= 1<<4;
-  #define SERVO_2_PIN_LOW            PORTL &= ~(1<<4);
-  #define SERVO_3_PINMODE            pinMode(38,OUTPUT);        // CAM TRIG
-  #define SERVO_3_PIN_HIGH           PORTL |= 1<<3;
-  #define SERVO_3_PIN_LOW            PORTL &= ~(1<<3);
+#define MPU6050 
+#define MS561101BA 
+#define ACC_ORIENTATION(X, Y, Z)  {imu.accADC[ROLL]  = -X; imu.accADC[PITCH]  = -Y; imu.accADC[YAW]  =  Z;}
+#define GYRO_ORIENTATION(X, Y, Z) {imu.gyroADC[ROLL] =  Y; imu.gyroADC[PITCH] = -X; imu.gyroADC[YAW] = -Z;}
+#undef INTERNAL_I2C_PULLUPS 
+//servo pins on RCNet FC board are at pins 38,39,40
+#define SERVO_1_PINMODE            pinMode(40,OUTPUT);        // TILT_PITCH
+#define SERVO_1_PIN_HIGH           PORTL |= 1<<5;
+#define SERVO_1_PIN_LOW            PORTL &= ~(1<<5);
+#define SERVO_2_PINMODE            pinMode(39,OUTPUT);        // TILT_ROLL 
+#define SERVO_2_PIN_HIGH           PORTL |= 1<<4;
+#define SERVO_2_PIN_LOW            PORTL &= ~(1<<4);
+#define SERVO_3_PINMODE            pinMode(38,OUTPUT);        // CAM TRIG
+#define SERVO_3_PIN_HIGH           PORTL |= 1<<3;
+#define SERVO_3_PIN_LOW            PORTL &= ~(1<<3);
+#define BUZZERPIN_PINMODE          pinMode (31, OUTPUT);
+#if defined PILOTLAMP
+#define    PL_PIN_ON    PORTC |= 1<<6;
+#define    PL_PIN_OFF   PORTC &= ~(1<<6);
+#else
+#define BUZZERPIN_ON               PORTC |= 1<<6;
+#define BUZZERPIN_OFF              PORTC &= ~(1<<6);
+#endif
 #endif
 
 #if defined(FLYDU_ULTRA)
@@ -1587,6 +1653,7 @@
   #undef INTERNAL_I2C_PULLUPS
 #endif
 
+
 /**************************************************************************************/
 /***************              Sensor Type definitions              ********************/
 /**************************************************************************************/
@@ -1620,10 +1687,16 @@
   #define GPS_PROMINI
 #endif
 
-#if defined(GPS_SERIAL)  || defined(I2C_GPS) || defined(GPS_FROM_OSD)
+#if defined(GPS_SERIAL)  || defined(I2C_GPS)
   #define GPS 1
 #else
   #define GPS 0
+#endif
+
+#if defined(GPS_SERIAL)
+  #define NAVCAP 1
+#else
+  #define NAVCAP 0
 #endif
 
 #if defined(SRF02) || defined(SRF08) || defined(SRF10) || defined(SRC235) || defined(I2C_GPS_SONAR)
@@ -1632,74 +1705,6 @@
   #define SONAR 0
 #endif
 
-
-#if defined(MMA7455)
-  #define ACC_1G 64
-#endif
-#if defined(MMA8451Q)
-  #define ACC_1G 512
-#endif
-#if defined(ADXL345)
-  #define ACC_1G 265
-#endif
-#if defined(BMA180)
-  #define ACC_1G 255
-#endif
-#if defined(BMA280)
-  #define ACC_1G 255
-#endif
-#if defined(BMA020)
-  #define ACC_1G 63
-#endif
-#if defined(NUNCHACK)
-  #define ACC_1G 200
-#endif
-#if defined(LIS3LV02)
-  #define ACC_1G 256
-#endif
-#if defined(LSM303DLx_ACC)
-  #define ACC_1G 256
-#endif
-#if defined(ADCACC)
-  #define ACC_1G 75
-#endif
-#if defined(MPU6050)
-  #if defined(FREEIMUv04)
-    #define ACC_1G 255
-  #else
-    #define ACC_1G 512
-  #endif
-#endif
-#if defined(LSM330)
-  #define ACC_1G 256
-#endif
-#if defined(NUNCHUCK)
-  #define ACC_1G 200
-#endif
-#if !defined(ACC_1G)
-  #define ACC_1G 256
-#endif
-#define ACCZ_25deg   (int16_t)(ACC_1G * 0.90631) // 0.90631 = cos(25deg) (cos(theta) of accZ comparison)
-#define ACC_VelScale (9.80665f / 10000.0f / ACC_1G)
-
-#if defined(ITG3200)
-  #define GYRO_SCALE (4 / 14.375 * PI / 180.0 / 1000000.0) //ITG3200   14.375 LSB/(deg/s) and we ignore the last 2 bits
-#endif
-#if defined(L3G4200D)
-  #define GYRO_SCALE ((4.0f * PI * 70.0f)/(1000.0f * 180.0f * 1000000.0f))
-#endif
-#if defined(MPU6050)
-  #define GYRO_SCALE (4 / 16.4 * PI / 180.0 / 1000000.0)   //MPU6050 and MPU3050   16.4 LSB/(deg/s) and we ignore the last 2 bits
-#endif
-#if defined(LSM330)
-  #define GYRO_SCALE ((4.0f * PI * 70.0f)/(1000.0f * 180.0f * 1000000.0f)) // like L3G4200D
-#endif
-#if defined(MPU3050)
-  #define GYRO_SCALE (4 / 16.4 * PI / 180.0 / 1000000.0)   //MPU6050 and MPU3050   16.4 LSB/(deg/s) and we ignore the last 2 bits
-#endif
-#if defined(WMP)
-  #define GYRO_SCALE (1.0f/200e6f)
-#endif
 
 /**************************************************************************************/
 /***************      Multitype decleration for the GUI's          ********************/
@@ -2014,14 +2019,18 @@
 
 
 /**************************************************************************************/
-/***************        volume flight pre-defined scenarios        ********************/
+/***************               override defaults                   ********************/
 /**************************************************************************************/
+
+/*************** volume flight pre-defined scenarios ********************/
+
+
 #if defined(VOLUME_S1) || defined(VOLUME_S2) || defined(VOLUME_S3)
-  #define VOLUME_S1_DSTMAX 100
-  #define VOLUME_S2_DSTMAX 1000
-  #define VOLUME_S3_DSTMAX 60
-  #define VOLUME_HMAX_2KG  150
-  #define VOLUME_HMAX      50
+ #define VOLUME_S1_DSTMAX 100
+ #define VOLUME_S2_DSTMAX 1000
+ #define VOLUME_S3_DSTMAX 100
+ #define VOLUME_HMAX_2KG 150
+ #define VOLUME_HMAX 50
 #endif
 
   /***************               pin assignments ?  ********************/
